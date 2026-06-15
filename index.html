@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D 粒子动画工作台</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="tool-rail" aria-label="工具栏">
+        <button class="tool-button active" title="场景">◇</button>
+        <button class="tool-button" title="粒子">✦</button>
+        <button class="tool-button" title="播放">▶</button>
+        <button class="tool-button" title="导出预设">⇩</button>
+      </aside>
+
+      <section class="viewport-wrap">
+        <header class="topbar">
+          <div>
+            <h1>3D 粒子动画工作台</h1>
+            <p id="modelStatus">加载示例模型中</p>
+          </div>
+          <div class="top-actions">
+            <button id="recordVideo" class="ghost-button">开始录制</button>
+            <button id="exportPly" class="ghost-button">导出 PLY</button>
+            <button id="fitCamera" class="ghost-button">适配视图</button>
+            <button id="resetScene" class="ghost-button">重置</button>
+          </div>
+        </header>
+
+        <div id="dropZone" class="viewport">
+          <canvas id="sceneCanvas" aria-label="3D 预览画布"></canvas>
+          <div class="drop-copy">
+            <strong>拖入 3D 文件</strong>
+            <span>支持 GLB / GLTF / OBJ，可多选贴图与 bin 文件</span>
+          </div>
+        </div>
+
+        <footer class="timeline">
+          <button id="playPause" class="play-button">暂停</button>
+          <input id="timeScrub" type="range" min="0" max="1000" value="0" />
+          <span id="fpsReadout">60 fps</span>
+        </footer>
+      </section>
+
+      <aside class="inspector">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>模型</h2>
+            <span id="fileName">demo shape</span>
+          </div>
+          <label class="upload-box" for="modelInput">
+            <input id="modelInput" type="file" multiple accept=".glb,.gltf,.bin,.obj,.mtl,.png,.jpg,.jpeg,.webp" />
+            <span>选择模型文件</span>
+          </label>
+          <div class="stat-grid">
+            <div><span>顶点</span><strong id="vertexCount">0</strong></div>
+            <div><span>粒子</span><strong id="particleCount">0</strong></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>显示</h2>
+            <span id="renderModeLabel">混合</span>
+          </div>
+          <div class="segmented" id="renderModeControls">
+            <button data-render-mode="material">材质</button>
+            <button data-render-mode="wireframe">线框</button>
+            <button data-render-mode="hybrid" class="selected">混合</button>
+          </div>
+          <div class="color-row">
+            <label><span>材质色</span><input id="materialColor" type="color" value="#8eeeff" /></label>
+            <label><span>线框色</span><input id="wireColor" type="color" value="#87e8ff" /></label>
+          </div>
+          <label class="control-row">
+            <span>金属度</span>
+            <input id="materialMetalness" type="range" min="0" max="1" value="0.18" step="0.01" />
+          </label>
+          <label class="control-row">
+            <span>粗糙度</span>
+            <input id="materialRoughness" type="range" min="0" max="1" value="0.28" step="0.01" />
+          </label>
+          <label class="control-row">
+            <span>模型透明度</span>
+            <input id="materialOpacity" type="range" min="0.08" max="1" value="0.2" step="0.01" />
+          </label>
+          <label class="control-row">
+            <span>线框透明度</span>
+            <input id="wireOpacity" type="range" min="0.1" max="1" value="0.92" step="0.01" />
+          </label>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>粒子</h2>
+            <span>持续发射</span>
+          </div>
+          <div class="segmented" id="emissionModeControls">
+            <button data-emission-mode="surface" class="selected">表面</button>
+            <button data-emission-mode="vertex">顶点</button>
+            <button data-emission-mode="edge">边</button>
+          </div>
+          <label class="control-row">
+            <span>粒子数量</span>
+            <input id="density" type="range" min="4000" max="4000000" value="22000" step="1000" />
+          </label>
+          <label class="control-row">
+            <span>时间倍率</span>
+            <input id="speed" type="range" min="0.1" max="3" value="1" step="0.05" />
+          </label>
+          <label class="control-row">
+            <span>粒子尺寸</span>
+            <input id="particleSize" type="range" min="0.005" max="0.5" value="0.022" step="0.001" />
+          </label>
+          <label class="control-row">
+            <span>尺寸抖动</span>
+            <input id="particleSizeJitter" type="range" min="0" max="1" value="0" step="0.01" />
+          </label>
+          <label class="control-row">
+            <span>不透明度</span>
+            <input id="particleOpacity" type="range" min="0" max="1.5" value="0.92" step="0.01" />
+          </label>
+          <label class="control-row">
+            <span>寿命(秒)</span>
+            <input id="lifetime" type="range" min="0.4" max="60" value="2.2" step="0.05" />
+          </label>
+          <label class="control-row">
+            <span>寿命抖动</span>
+            <input id="lifetimeJitter" type="range" min="0" max="1" value="0.4" step="0.01" />
+          </label>
+          <label class="control-row">
+            <span>表面初速</span>
+            <input id="tangentSpeed" type="range" min="0" max="3" value="1.2" step="0.01" />
+          </label>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>拖尾</h2>
+            <span>真实历史路径</span>
+          </div>
+          <label class="switch-row">
+            <input id="trailEnabled" type="checkbox" />
+            <span>启用拖尾</span>
+          </label>
+          <label class="control-row">
+            <span>拖尾秒数</span>
+            <input id="trailSec" type="range" min="0.05" max="2.0" value="0.15" step="0.01" data-default="0.15" />
+          </label>
+          <label class="control-row">
+            <span>长度抖动</span>
+            <input id="trailJitter" type="range" min="0" max="1" value="0" step="0.01" data-default="0" />
+          </label>
+          <label class="control-row">
+            <span>拖尾宽度</span>
+            <input id="trailWidth" type="range" min="0.001" max="0.05" value="0.005" step="0.0005" data-default="0.005" />
+          </label>
+          <label class="control-row">
+            <span>头尾衰减</span>
+            <input id="trailTailFade" type="range" min="0" max="1" value="0.85" step="0.01" data-default="0.85" />
+          </label>
+          <label class="control-row">
+            <span>拖尾不透明度</span>
+            <input id="trailOpacity" type="range" min="0" max="1.5" value="0.92" step="0.01" data-default="0.92" />
+          </label>
+          <label class="control-row">
+            <span>显存预算 (MB)</span>
+            <input id="trailVramBudget" type="range" min="32" max="512" value="128" step="16" data-default="128" />
+          </label>
+          <div id="trailReadout" class="trail-readout">显存占用：—</div>
+          <div id="trailWarnYellow" class="warn-banner-yellow" style="display:none"></div>
+          <div id="trailWarnRed" class="warn-banner-red" style="display:none">
+            <span>显存不足，拖尾已自动禁用</span>
+            <button type="button" id="trailRetry" class="ghost-button">重试</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Modifier 栈</h2>
+            <span>力场组合</span>
+          </div>
+          <div id="modifierStack" class="mod-stack"></div>
+          <div class="mod-add-row">
+            <select id="modifierTypePicker"></select>
+            <button id="addModifier" class="ghost-button">+ 添加</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>颜色</h2>
+            <span>Ramp</span>
+          </div>
+          <div class="segmented" id="colorModeControls">
+            <button data-color-mode="age" class="selected">按年龄</button>
+            <button data-color-mode="speed">按速度</button>
+            <button data-color-mode="fixed">固定</button>
+          </div>
+          <div id="gradientPreview" class="gradient-preview"></div>
+          <div id="gradientStops" class="gradient-stops"></div>
+          <button id="addGradientStop" class="ghost-button gradient-add">+ 色标</button>
+          <label class="control-row" id="colorSpeedRefRow">
+            <span>速度参考(最大)</span>
+            <input id="colorSpeedRef" type="range" min="0.5" max="20" value="5" step="0.1" />
+          </label>
+          <label class="control-row">
+            <span>亮度衰减</span>
+            <input id="colorFade" type="range" min="0" max="1" value="1" step="0.01" />
+          </label>
+          <label class="switch-row">
+            <input id="showModel" type="checkbox" checked />
+            <span>显示原始模型</span>
+          </label>
+          <label class="switch-row">
+            <input id="showGrid" type="checkbox" checked />
+            <span>显示地面网格</span>
+          </label>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>光影</h2>
+            <span>实时</span>
+          </div>
+          <div class="color-row">
+            <label><span>主光色</span><input id="keyLightColor" type="color" value="#ffffff" /></label>
+            <label><span>环境色</span><input id="ambientLightColor" type="color" value="#aab8ff" /></label>
+          </div>
+          <label class="control-row">
+            <span>主光强度</span>
+            <input id="keyLightIntensity" type="range" min="0" max="6" value="2.4" step="0.05" />
+          </label>
+          <label class="control-row">
+            <span>环境光</span>
+            <input id="ambientLightIntensity" type="range" min="0" max="3" value="0.9" step="0.05" />
+          </label>
+          <label class="control-row">
+            <span>补光</span>
+            <input id="fillLightIntensity" type="range" min="0" max="4" value="0.7" step="0.05" />
+          </label>
+          <label class="control-row">
+            <span>轮廓光</span>
+            <input id="rimLightIntensity" type="range" min="0" max="5" value="1.15" step="0.05" />
+          </label>
+          <label class="control-row">
+            <span>主光方位</span>
+            <input id="lightAzimuth" type="range" min="-180" max="180" value="45" step="1" />
+          </label>
+          <label class="control-row">
+            <span>主光高度</span>
+            <input id="lightElevation" type="range" min="-20" max="80" value="42" step="1" />
+          </label>
+          <label class="control-row">
+            <span>曝光</span>
+            <input id="exposure" type="range" min="0.35" max="2.2" value="1.06" step="0.01" />
+          </label>
+        </section>
+
+        <section class="panel preset-panel">
+          <div class="panel-head">
+            <h2>预设</h2>
+            <span>本地保存</span>
+          </div>
+          <div class="preset-save-row">
+            <input id="presetName" type="text" placeholder="新预设名（如 storm-on-statue）" maxlength="40" />
+            <button id="presetSave" class="primary-button">保存当前</button>
+          </div>
+          <div id="presetList" class="preset-list"></div>
+          <p id="presetEmpty" class="preset-empty">尚未保存任何预设</p>
+        </section>
+      </aside>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

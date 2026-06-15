@@ -1,0 +1,21 @@
+# 本地代理启动脚本（含个人代理端口）
+启动claude code.bat
+
+# Claude Code 本地配置和文档（仅本机）
+.claude/settings.local.json
+CLAUDE.md
+
+# Node（即使当前没用，未来可能引入）
+node_modules/
+
+# OS / 编辑器噪音
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+
+# 模型测试文件（避免大文件意外提交）
+*.glb
+*.gltf
+*.bin
+*.obj
