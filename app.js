@@ -41,12 +41,25 @@ const colorSpeedRefInput = document.querySelector("#colorSpeedRef");
 const colorSpeedRefRow = document.querySelector("#colorSpeedRefRow");
 const colorFadeInput = document.querySelector("#colorFade");
 
+const trailEnabledInput = document.querySelector("#trailEnabled");
+const trailSecInput = document.querySelector("#trailSec");
+const trailJitterInput = document.querySelector("#trailJitter");
+const trailWidthInput = document.querySelector("#trailWidth");
+const trailTailFadeInput = document.querySelector("#trailTailFade");
+const trailOpacityInput = document.querySelector("#trailOpacity");
+const trailVramBudgetInput = document.querySelector("#trailVramBudget");
+const trailReadoutEl = document.querySelector("#trailReadout");
+const trailWarnYellow = document.querySelector("#trailWarnYellow");
+const trailWarnRed = document.querySelector("#trailWarnRed");
+const trailRetryBtn = document.querySelector("#trailRetry");
+
 const controlsConfig = {
   renderMode: "hybrid",
   density: document.querySelector("#density"),
   speed: document.querySelector("#speed"),
   particleSize: document.querySelector("#particleSize"),
   particleSizeJitter: document.querySelector("#particleSizeJitter"),
+  particleOpacity: document.querySelector("#particleOpacity"),
   lifetime: document.querySelector("#lifetime"),
   lifetimeJitter: document.querySelector("#lifetimeJitter"),
   tangentSpeed: document.querySelector("#tangentSpeed"),
@@ -194,6 +207,16 @@ const MODIFIER_DEFS = {
       { key: "octaves", label: "倍频数", min: 1, max: 6, step: 1 }
     ]
   },
+  curlnoise: {
+    label: "卷流噪声",
+    description: "无散度噪声场（curl of fBm 势函数），粒子顺涡管流动——视觉上从抖变流",
+    defaults: { strength: 1.2, scale: 1.5, octaves: 3 },
+    paramSchema: [
+      { key: "strength", label: "强度", min: 0, max: 4, step: 0.01 },
+      { key: "scale", label: "尺度", min: 0.3, max: 12, step: 0.1 },
+      { key: "octaves", label: "倍频数", min: 1, max: 6, step: 1 }
+    ]
+  },
   drag: {
     label: "阻力",
     description: "Stokes 阻尼，让粒子减速归零",
@@ -234,6 +257,15 @@ const MODIFIER_DEFS = {
     defaults: { strength: 3.0, tangentDamp: 0.85 },
     paramSchema: [
       { key: "strength", label: "捕获强度", min: 0, max: 12, step: 0.05 },
+      { key: "tangentDamp", label: "法向阻尼", min: 0, max: 1, step: 0.01 }
+    ]
+  },
+  surfaceSlide: {
+    label: "表面滑流",
+    description: "基于 SDF 让粒子贴模型表面、按重力沿切线滑动；配合重力使用，能在凹陷处堆积",
+    defaults: { strength: 6.0, tangentDamp: 0.95 },
+    paramSchema: [
+      { key: "strength", label: "贴附强度", min: 0, max: 30, step: 0.1 },
       { key: "tangentDamp", label: "法向阻尼", min: 0, max: 1, step: 0.01 }
     ]
   },
@@ -291,6 +323,16 @@ const cohesionDefault = makeModifier("cohesion");
 cohesionDefault.enabled = false;
 cohesionDefault.collapsed = true;
 modifiers.push(cohesionDefault);
+
+const curlNoiseDefault = makeModifier("curlnoise");
+curlNoiseDefault.enabled = false;
+curlNoiseDefault.collapsed = true;
+modifiers.push(curlNoiseDefault);
+
+const surfaceSlideDefault = makeModifier("surfaceSlide");
+surfaceSlideDefault.enabled = false;
+surfaceSlideDefault.collapsed = true;
+modifiers.push(surfaceSlideDefault);
 
 
 scene.add(modelRoot);
@@ -551,6 +593,120 @@ function collectSurfaceSamples(root) {
   };
 }
 
+function bakeSDFFromSamples(surfaceSamples, modelBounds) {
+  const SDF_DIM = 32;
+  const PADDING_FACTOR = 0.2;
+  const MAX_BAKE_SAMPLES = 3000;
+
+  const sp = surfaceSamples.samplePositions;
+  const sn = surfaceSamples.sampleNormals;
+  const totalSamples = (sp.length / 3) | 0;
+  if (totalSamples === 0 || modelBounds.isEmpty()) return null;
+
+  const t0 = performance.now();
+  const stride = totalSamples > MAX_BAKE_SAMPLES ? Math.ceil(totalSamples / MAX_BAKE_SAMPLES) : 1;
+  const sCount = Math.ceil(totalSamples / stride);
+
+  const minX = modelBounds.min.x;
+  const minY = modelBounds.min.y;
+  const minZ = modelBounds.min.z;
+  const maxX = modelBounds.max.x;
+  const maxY = modelBounds.max.y;
+  const maxZ = modelBounds.max.z;
+  const padX = (maxX - minX) * PADDING_FACTOR;
+  const padY = (maxY - minY) * PADDING_FACTOR;
+  const padZ = (maxZ - minZ) * PADDING_FACTOR;
+  const sdfMinX = minX - padX;
+  const sdfMinY = minY - padY;
+  const sdfMinZ = minZ - padZ;
+  const sdfMaxX = maxX + padX;
+  const sdfMaxY = maxY + padY;
+  const sdfMaxZ = maxZ + padZ;
+
+  const dvx = (sdfMaxX - sdfMinX) / (SDF_DIM - 1);
+  const dvy = (sdfMaxY - sdfMinY) / (SDF_DIM - 1);
+  const dvz = (sdfMaxZ - sdfMinZ) / (SDF_DIM - 1);
+
+  const atlasW = SDF_DIM;
+  const atlasH = SDF_DIM * SDF_DIM;
+  const data = new Float32Array(atlasW * atlasH * 4);
+
+  for (let z = 0; z < SDF_DIM; z += 1) {
+    const pz = sdfMinZ + z * dvz;
+    for (let y = 0; y < SDF_DIM; y += 1) {
+      const py = sdfMinY + y * dvy;
+      for (let x = 0; x < SDF_DIM; x += 1) {
+        const px = sdfMinX + x * dvx;
+
+        let bestD2 = Infinity;
+        let bestIdx = 0;
+        for (let s = 0; s < totalSamples; s += stride) {
+          const si = s * 3;
+          const ddx = px - sp[si];
+          const ddy = py - sp[si + 1];
+          const ddz = pz - sp[si + 2];
+          const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+          if (d2 < bestD2) {
+            bestD2 = d2;
+            bestIdx = s;
+          }
+        }
+
+        const bi = bestIdx * 3;
+        const sx = sp[bi];
+        const sy = sp[bi + 1];
+        const sz = sp[bi + 2];
+        const nx = sn[bi];
+        const ny = sn[bi + 1];
+        const nz = sn[bi + 2];
+
+        const vxd = px - sx;
+        const vyd = py - sy;
+        const vzd = pz - sz;
+        const dotN = vxd * nx + vyd * ny + vzd * nz;
+        const sign = dotN >= 0 ? 1 : -1;
+        const dist = Math.sqrt(bestD2);
+        const signedD = sign * dist;
+
+        let gx, gy, gz;
+        if (dist > 1e-6) {
+          const inv = sign / dist;
+          gx = vxd * inv;
+          gy = vyd * inv;
+          gz = vzd * inv;
+        } else {
+          gx = sign * nx;
+          gy = sign * ny;
+          gz = sign * nz;
+        }
+
+        const pi = ((z * SDF_DIM + y) * atlasW + x) * 4;
+        data[pi] = signedD;
+        data[pi + 1] = gx;
+        data[pi + 2] = gy;
+        data[pi + 3] = gz;
+      }
+    }
+  }
+
+  const tex = new THREE.DataTexture(data, atlasW, atlasH, THREE.RGBAFormat, THREE.FloatType);
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.minFilter = THREE.NearestFilter;
+  tex.magFilter = THREE.NearestFilter;
+  tex.needsUpdate = true;
+
+  const t1 = performance.now();
+  console.log(`[SDF] baked ${SDF_DIM}³ in ${(t1 - t0).toFixed(1)}ms (${sCount}/${totalSamples} samples, stride=${stride})`);
+
+  return {
+    texture: tex,
+    boundsMin: [sdfMinX, sdfMinY, sdfMinZ],
+    boundsMax: [sdfMaxX, sdfMaxY, sdfMaxZ],
+    dim: SDF_DIM
+  };
+}
+
 const sim = new GpuParticleSim(renderer, particleTexture);
 let simAddedToScene = false;
 
@@ -571,8 +727,61 @@ function pushSimParams() {
     tangentSpeed: Number(controlsConfig.tangentSpeed.value),
     particleSize: Number(controlsConfig.particleSize.value),
     particleSizeJitter: Number(controlsConfig.particleSizeJitter.value),
+    particleOpacity: Number(controlsConfig.particleOpacity.value),
     speed: Number(controlsConfig.speed.value)
   });
+}
+
+function pushTrailParams() {
+  sim.setTrailParams({
+    jitter: Number(trailJitterInput.value),
+    width: Number(trailWidthInput.value),
+    tailFade: Number(trailTailFadeInput.value),
+    opacity: Number(trailOpacityInput.value)
+  });
+}
+
+let trailMeshAddedToScene = false;
+function refreshTrailReadout() {
+  const s = sim.getTrailStatus();
+  if (s.kEff > 0) {
+    const sub = s.subSteps || 1;
+    const subStr = sub > 1 ? `（每 ${sub} 帧采 1 次）` : "";
+    trailReadoutEl.textContent = `显存占用：${s.kEff} 帧 × ${formatNumber(Number(controlsConfig.density.value))} 粒子 = ${s.vramMB.toFixed(1)} MB${subStr}`;
+  } else {
+    trailReadoutEl.textContent = "显存占用：—";
+  }
+  if (s.truncatedByVram && !s.disabledByAlloc && trailEnabledInput.checked) {
+    trailWarnYellow.style.display = "";
+    trailWarnYellow.textContent = `已截断：用户请求 ${s.kReq} 帧，VRAM 预算限制为 ${s.kEff} 帧`;
+  } else {
+    trailWarnYellow.style.display = "none";
+  }
+  trailWarnRed.style.display = s.disabledByAlloc ? "" : "none";
+}
+
+function applyTrailEnabled() {
+  const enabled = trailEnabledInput.checked;
+  if (enabled) {
+    // Push all current values so initial rebuild uses them
+    sim.setTrailParams({
+      sec: Number(trailSecInput.value),
+      jitter: Number(trailJitterInput.value),
+      width: Number(trailWidthInput.value),
+      tailFade: Number(trailTailFadeInput.value),
+      opacity: Number(trailOpacityInput.value),
+      vramBudgetMB: Number(trailVramBudgetInput.value)
+    });
+  }
+  sim.setTrailEnabled(enabled);
+  if (enabled) {
+    const mesh = sim.getTrailMesh();
+    if (mesh && !trailMeshAddedToScene) {
+      scene.add(mesh);
+      trailMeshAddedToScene = true;
+    }
+  }
+  refreshTrailReadout();
 }
 
 function pushModifiers() {
@@ -594,6 +803,9 @@ function rebuildParticles() {
     simAddedToScene = true;
   }
   particleCount.textContent = formatNumber(desiredCount);
+  if (trailEnabledInput && trailEnabledInput.checked) {
+    refreshTrailReadout();
+  }
 }
 
 function updateParticleFrame(delta) {
@@ -632,6 +844,13 @@ function setModel(root, name = "model") {
     triCDF: samples.triCDF,
     triCount: samples.triCount
   };
+  let sdf = null;
+  try {
+    sdf = bakeSDFFromSamples(surfaceSamples, modelBounds);
+  } catch (err) {
+    console.error("[SDF] bake failed, surfaceSlide will be a no-op:", err);
+  }
+  sim.setSDF(sdf);
   vertexCount.textContent = formatNumber(samples.positions.length / 3);
   fileName.textContent = name;
   showModel.checked = true;
@@ -846,6 +1065,35 @@ controlsConfig.density.addEventListener("input", () => {
   particleCount.textContent = formatNumber(Number(controlsConfig.density.value));
 });
 
+let trailSecDebounceTimer = 0;
+let trailBudgetDebounceTimer = 0;
+trailEnabledInput.addEventListener("change", applyTrailEnabled);
+trailSecInput.addEventListener("input", () => {
+  clearTimeout(trailSecDebounceTimer);
+  trailSecDebounceTimer = setTimeout(() => {
+    sim.setTrailParams({ sec: Number(trailSecInput.value) });
+    refreshTrailReadout();
+  }, 300);
+});
+trailVramBudgetInput.addEventListener("input", () => {
+  clearTimeout(trailBudgetDebounceTimer);
+  trailBudgetDebounceTimer = setTimeout(() => {
+    sim.setTrailParams({ vramBudgetMB: Number(trailVramBudgetInput.value) });
+    refreshTrailReadout();
+  }, 300);
+});
+[trailJitterInput, trailWidthInput, trailTailFadeInput, trailOpacityInput].forEach((el) =>
+  el.addEventListener("input", pushTrailParams)
+);
+trailRetryBtn.addEventListener("click", () => {
+  if (!trailEnabledInput.checked) {
+    trailEnabledInput.checked = true;
+  } else {
+    sim.setTrailEnabled(false);
+  }
+  applyTrailEnabled();
+});
+
 function updateGradientPreview() {
   const sorted = [...gradientStops].sort((a, b) => a.pos - b.pos);
   const css = sorted.map((s) => `${s.color} ${(s.pos * 100).toFixed(2)}%`).join(", ");
@@ -992,11 +1240,12 @@ function renderModifierRow(mod) {
 
   for (const schema of def.paramSchema) {
     const v = mod.params[schema.key];
+    const defaultV = def.defaults[schema.key];
     const label = document.createElement("label");
     label.className = "control-row";
     label.innerHTML = `
       <span>${schema.label}</span>
-      <input type="range" min="${schema.min}" max="${schema.max}" step="${schema.step}" value="${v}" data-param="${schema.key}" />
+      <input type="range" min="${schema.min}" max="${schema.max}" step="${schema.step}" value="${v}" data-default="${defaultV}" data-param="${schema.key}" />
     `;
     body.appendChild(label);
   }
@@ -1014,11 +1263,11 @@ function renderModifierRow(mod) {
   `;
   if (mod.falloff.type === "sphere") {
     falloff.insertAdjacentHTML("beforeend", `
-      <label class="control-row"><span>中心 X</span><input type="range" min="-3" max="3" step="0.05" value="${mod.falloff.center[0]}" data-falloff="cx" /></label>
-      <label class="control-row"><span>中心 Y</span><input type="range" min="-3" max="3" step="0.05" value="${mod.falloff.center[1]}" data-falloff="cy" /></label>
-      <label class="control-row"><span>中心 Z</span><input type="range" min="-3" max="3" step="0.05" value="${mod.falloff.center[2]}" data-falloff="cz" /></label>
-      <label class="control-row"><span>内半径</span><input type="range" min="0" max="5" step="0.05" value="${mod.falloff.inner}" data-falloff="inner" /></label>
-      <label class="control-row"><span>外半径</span><input type="range" min="0.05" max="6" step="0.05" value="${mod.falloff.outer}" data-falloff="outer" /></label>
+      <label class="control-row"><span>中心 X</span><input type="range" min="-3" max="3" step="0.05" value="${mod.falloff.center[0]}" data-default="0" data-falloff="cx" /></label>
+      <label class="control-row"><span>中心 Y</span><input type="range" min="-3" max="3" step="0.05" value="${mod.falloff.center[1]}" data-default="0" data-falloff="cy" /></label>
+      <label class="control-row"><span>中心 Z</span><input type="range" min="-3" max="3" step="0.05" value="${mod.falloff.center[2]}" data-default="0" data-falloff="cz" /></label>
+      <label class="control-row"><span>内半径</span><input type="range" min="0" max="5" step="0.05" value="${mod.falloff.inner}" data-default="0.6" data-falloff="inner" /></label>
+      <label class="control-row"><span>外半径</span><input type="range" min="0.05" max="6" step="0.05" value="${mod.falloff.outer}" data-default="2.5" data-falloff="outer" /></label>
     `);
   }
   body.appendChild(falloff);
@@ -1027,11 +1276,70 @@ function renderModifierRow(mod) {
   return row;
 }
 
+function formatParamValue(input) {
+  const v = parseFloat(input.value);
+  if (!Number.isFinite(v)) return input.value;
+  const step = parseFloat(input.step) || 1;
+  const stepStr = step.toString();
+  const decimals = stepStr.includes(".") ? stepStr.split(".")[1].length : 0;
+  return v.toLocaleString("zh-CN", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function getParamDefault(input) {
+  if (input.dataset.default !== undefined) return input.dataset.default;
+  return input.getAttribute("value") ?? input.defaultValue ?? "";
+}
+
+function enhanceParamControl(input) {
+  if (input.dataset.enhanced === "1") return;
+  const row = input.closest(".control-row");
+  if (!row) return;
+  const labelHost = row.querySelector(":scope > span");
+  if (!labelHost) return;
+  input.dataset.enhanced = "1";
+  labelHost.classList.add("row-flex");
+
+  const isRange = input.type === "range";
+  let valueLabel = null;
+  if (isRange) {
+    valueLabel = document.createElement("span");
+    valueLabel.className = "row-value";
+    valueLabel.textContent = formatParamValue(input);
+    input.addEventListener("input", () => {
+      valueLabel.textContent = formatParamValue(input);
+    });
+    labelHost.appendChild(valueLabel);
+  }
+
+  const resetBtn = document.createElement("button");
+  resetBtn.type = "button";
+  resetBtn.className = "row-reset";
+  resetBtn.title = `重置为 ${getParamDefault(input)}`;
+  resetBtn.textContent = "⟲";
+  resetBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const def = getParamDefault(input);
+    input.value = def;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    if (valueLabel) valueLabel.textContent = formatParamValue(input);
+  });
+  labelHost.appendChild(resetBtn);
+}
+
+function enhanceAllParams(root) {
+  const scope = root || document;
+  const inputs = scope.querySelectorAll('.control-row input[type="range"], .control-row input[type="color"], .control-row select');
+  inputs.forEach(enhanceParamControl);
+}
+
 function renderModifierStack() {
   modifierStackEl.innerHTML = "";
   for (const mod of modifiers) {
     modifierStackEl.appendChild(renderModifierRow(mod));
   }
+  enhanceAllParams(modifierStackEl);
 }
 
 function populateModifierTypePicker() {
@@ -1191,6 +1499,15 @@ function getCurrentPreset() {
       azimuth: Number(controlsConfig.lightAzimuth.value),
       elevation: Number(controlsConfig.lightElevation.value),
       exposure: Number(controlsConfig.exposure.value)
+    },
+    trail: {
+      enabled: !!trailEnabledInput.checked,
+      sec: Number(trailSecInput.value),
+      jitter: Number(trailJitterInput.value),
+      width: Number(trailWidthInput.value),
+      tailFade: Number(trailTailFadeInput.value),
+      opacity: Number(trailOpacityInput.value),
+      vramBudgetMB: Number(trailVramBudgetInput.value)
     }
   };
 }
@@ -1285,7 +1602,22 @@ function applyPreset(preset) {
     updateLighting();
   }
 
+  if (preset.trail) {
+    const t = preset.trail;
+    setIf(trailSecInput, t.sec);
+    setIf(trailJitterInput, t.jitter);
+    setIf(trailWidthInput, t.width);
+    setIf(trailTailFadeInput, t.tailFade);
+    setIf(trailOpacityInput, t.opacity);
+    setIf(trailVramBudgetInput, t.vramBudgetMB);
+    trailEnabledInput.checked = !!t.enabled;
+  }
+
   rebuildParticles();
+
+  if (preset.trail) {
+    applyTrailEnabled();
+  }
 }
 
 const PRESET_STORE_KEY = "particleStudio.presets.v1";
@@ -1599,4 +1931,5 @@ window.addEventListener("resize", updateRendererSize);
 updateRendererSize();
 updateLighting();
 createDemoModel();
+enhanceAllParams();
 animate();

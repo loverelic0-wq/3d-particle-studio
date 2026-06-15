@@ -120,15 +120,19 @@
           </label>
           <label class="control-row">
             <span>粒子尺寸</span>
-            <input id="particleSize" type="range" min="0.005" max="0.08" value="0.022" step="0.001" />
+            <input id="particleSize" type="range" min="0.005" max="0.5" value="0.022" step="0.001" />
           </label>
           <label class="control-row">
             <span>尺寸抖动</span>
             <input id="particleSizeJitter" type="range" min="0" max="1" value="0" step="0.01" />
           </label>
           <label class="control-row">
+            <span>不透明度</span>
+            <input id="particleOpacity" type="range" min="0" max="1.5" value="0.92" step="0.01" />
+          </label>
+          <label class="control-row">
             <span>寿命(秒)</span>
-            <input id="lifetime" type="range" min="0.4" max="6" value="2.2" step="0.05" />
+            <input id="lifetime" type="range" min="0.4" max="60" value="2.2" step="0.05" />
           </label>
           <label class="control-row">
             <span>寿命抖动</span>
@@ -138,6 +142,47 @@
             <span>表面初速</span>
             <input id="tangentSpeed" type="range" min="0" max="3" value="1.2" step="0.01" />
           </label>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>拖尾</h2>
+            <span>真实历史路径</span>
+          </div>
+          <label class="switch-row">
+            <input id="trailEnabled" type="checkbox" />
+            <span>启用拖尾</span>
+          </label>
+          <label class="control-row">
+            <span>拖尾秒数</span>
+            <input id="trailSec" type="range" min="0.05" max="2.0" value="0.15" step="0.01" data-default="0.15" />
+          </label>
+          <label class="control-row">
+            <span>长度抖动</span>
+            <input id="trailJitter" type="range" min="0" max="1" value="0" step="0.01" data-default="0" />
+          </label>
+          <label class="control-row">
+            <span>拖尾宽度</span>
+            <input id="trailWidth" type="range" min="0.001" max="0.05" value="0.005" step="0.0005" data-default="0.005" />
+          </label>
+          <label class="control-row">
+            <span>头尾衰减</span>
+            <input id="trailTailFade" type="range" min="0" max="1" value="0.85" step="0.01" data-default="0.85" />
+          </label>
+          <label class="control-row">
+            <span>拖尾不透明度</span>
+            <input id="trailOpacity" type="range" min="0" max="1.5" value="0.92" step="0.01" data-default="0.92" />
+          </label>
+          <label class="control-row">
+            <span>显存预算 (MB)</span>
+            <input id="trailVramBudget" type="range" min="32" max="512" value="128" step="16" data-default="128" />
+          </label>
+          <div id="trailReadout" class="trail-readout">显存占用：—</div>
+          <div id="trailWarnYellow" class="warn-banner-yellow" style="display:none"></div>
+          <div id="trailWarnRed" class="warn-banner-red" style="display:none">
+            <span>显存不足，拖尾已自动禁用</span>
+            <button type="button" id="trailRetry" class="ghost-button">重试</button>
+          </div>
         </section>
 
         <section class="panel">
